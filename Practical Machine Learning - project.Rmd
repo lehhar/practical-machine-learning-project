@@ -1,0 +1,168 @@
+---
+title: "Practical Machine Learning project - Evaluate the manner of Weight Lifting exercises"
+author: "lehhar"
+date: "18 October 2015"
+output: html_document
+---
+
+#Background:
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+#Aim of the project:
+The goal of the project is to predict the manner in which the exercise is done. This is the "classe" variable in the training set.
+
+# Data:
+The training data for this project are available here:  https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+We thank for the allowance to use the data to: Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+```{r, warning=FALSE, message=FALSE}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+```
+
+# Getting and loading the data
+
+The data has been downloaded from the above mentioned source and stored in the working directory.
+
+```{r, echo=FALSE}
+dir <- "D:/Allerlei/Coursera/R-files/Practical Machine Learning - project writeup"
+setwd(dir)
+```
+
+```{r}
+if(!exists("Data")){Data <- read.csv("pml-training.csv")}
+if(!exists("DataTest")){DataTest <- read.csv("pml-testing.csv")}
+dim(Data); dim(DataTest)
+```
+
+Partitioning the data in a training and testing set:
+
+```{r}
+set.seed(9843)
+inTrain <- createDataPartition(Data$classe,p=0.6,list=FALSE)
+training <- Data[inTrain,]
+testing <- Data[-inTrain,]
+dim(training); dim(testing); dim(DataTest)
+```
+
+Exploring the data shows that the first 2 columns are only a numbering and names and therefore need to be removed. Another information is that several columns consist of many NA values.
+Those columns need to be removed too:
+
+```{r}
+h <- Data
+h <- h[1:20,]
+training <- training[,-c(1,2)]
+testing <- testing[,-c(1,2)]
+DataTest <- DataTest[,-c(1,2)]
+h <- h[,-c(1,2)]
+for(i in (ncol(training)-1) : 1){
+        if((sum(is.na(training[,i])) / nrow(training) > 0.5) || (sum(training[,i] == "") > 0.5)){
+                training <- training[,-i]
+                testing <- testing[,-i]
+                DataTest <- DataTest[,-i]
+                h <- h[,-i]
+        }
+}
+dim(training); dim(testing); dim(DataTest); dim(h)
+```
+
+Remove columns which have variance near 0:
+
+```{r}
+nzv <- nearZeroVar(training,saveMetrics=TRUE)
+training <- training[,nzv$nzv==FALSE]
+testing <- testing[,nzv$nzv==FALSE]
+DataTest <- DataTest[,nzv$nzv==FALSE]
+h <- h[,nzv$nzv==FALSE]
+dim(training); dim(testing); dim(DataTest); dim(h)
+```
+
+# Predicting with Decision Trees
+
+```{r}
+decTree <- rpart(classe ~ ., data=training, method="class")
+fancyRpartPlot(decTree)
+
+```
+
+Evaluating the Decision Tree model with the test set:
+
+```{r}
+predictionDecTree <- predict(decTree, testing, type="class")
+confMatDecTree <- confusionMatrix(predictionDecTree,testing$classe)
+confMatDecTree
+```
+
+```{r}
+plot(confMatDecTree$table,col=confMatDecTree$byClass,main=paste("Decision Tree Confusion Matrix: Accuracy = ",round(confMatDecTree$overall['Accuracy'],4)))
+```
+
+# Predicting with Random Forests
+
+```{r}
+randFor <- randomForest(classe ~ .,data=training)
+predictionRandFor <- predict(randFor,testing,type="class")
+confMatRandFor <- confusionMatrix(predictionRandFor,testing$classe)
+confMatRandFor
+```
+
+```{r}
+plot(randFor,main="Random Forest prediction error")
+```
+
+```{r}
+plot(confMatRandFor$table,col=confMatRandFor$byClass,main=paste("Random Forest Confusion Matrix: Accuracy = ",round(confMatRandFor$overall['Accuracy'],4)))
+```
+
+# Predicting with Generalized Boosted Regression
+
+```{r}
+fitControl <- trainControl(method="repeatedcv",number=5,repeats=1)
+GenBooReg <- train(classe ~ .,data=training,method="gbm",trControl=fitControl,verbose=FALSE)
+GenBooRegFin <- GenBooReg$finalModel
+predictionGenBooRegFin <- predict(GenBooReg,newdata=testing)
+GenBooRegAccuracyTest <- confusionMatrix(predictionGenBooRegFin,testing$classe)
+GenBooRegAccuracyTest
+```
+
+```{r}
+plot(GenBooReg,ylim=c(0.9,1))
+```
+
+# Applying the best fitted model to the test data set
+
+Random Forests gave 99.9% accuracy for the testing data set which is higher than the accuracy for Decision Tree and the Generalized Boosted Regression.
+
+The expected out-of-sample error is 100% - 99.9% = 0.1%
+
+```{r, warning=FALSE, message=FALSE}
+for(i in 1:20){
+        for(j in 1:ncol(h)){
+                h[i,j] <- DataTest[i,j]
+        }
+}
+TestPrediction <- predict(randFor,h,type="class")
+TestPrediction
+```
+
+```{r}
+# Write the results to a text file for submission
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+# pml_write_files(TestPrediction)
+```
